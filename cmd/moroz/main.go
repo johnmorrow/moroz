@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
+  "io/ioutil"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,16 +43,36 @@ The latest version of santa is available on the github repo page:
 	https://github.com/google/santa/releases
 `
 
+const createCABash = `
+Looks like you're missing a client CA certificate required for mutual TLS. 
+To generate a CA and vend a new certificate to an authorized client, follow these steps:
+
+1. Generate a CA certificate:
+   openssl genrsa -out ca.key 2048
+   openssl req -x509 -new -nodes -key ca.key -sha256 -days 1024 -out ca.crt
+
+2. Create a client certificate and private key:
+   openssl genrsa -out client.key 2048
+   openssl req -new -key client.key -out client.csr
+
+3. Sign the client certificate with the CA:
+   openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 500 -sha256
+
+Replace "ca.key", "ca.crt", "client.key", "client.csr", and "client.crt" with your preferred file names.
+`
+
 func main() {
 	var (
-		flTLSCert = flag.String("tls-cert", env.String("MOROZ_TLS_CERT", "server.crt"), "path to TLS certificate")
-		flTLSKey  = flag.String("tls-key", env.String("MOROZ_TLS_KEY", "server.key"), "path to TLS private key")
-		flAddr    = flag.String("http-addr", env.String("MOROZ_HTTP_ADDRESS", ":8080"), "http address ex: -http-addr=:8080")
-		flConfigs = flag.String("configs", env.String("MOROZ_CONFIGS", "../../configs"), "path to config folder")
-		flEvents  = flag.String("event-dir", env.String("MOROZ_EVENT_DIR", "/tmp/santa_events"), "Path to root directory where events will be stored.")
-		flVersion = flag.Bool("version", false, "print version information")
-		flDebug   = flag.Bool("debug", false, "log at a debug level by default.")
-		flUseTLS  = flag.Bool("use-tls", true, "I promise I terminated TLS elsewhere when changing this")
+		flTLSCert  = flag.String("tls-cert", env.String("MOROZ_TLS_CERT", "server.crt"), "path to TLS certificate")
+		flTLSKey   = flag.String("tls-key", env.String("MOROZ_TLS_KEY", "server.key"), "path to TLS private key")
+		flAddr     = flag.String("http-addr", env.String("MOROZ_HTTP_ADDRESS", ":8080"), "http address ex: -http-addr=:8080")
+		flConfigs  = flag.String("configs", env.String("MOROZ_CONFIGS", "../../configs"), "path to config folder")
+		flEvents   = flag.String("event-dir", env.String("MOROZ_EVENT_DIR", "/tmp/santa_events"), "Path to root directory where events will be stored.")
+		flVersion  = flag.Bool("version", false, "print version information")
+		flDebug    = flag.Bool("debug", false, "log at a debug level by default.")
+		flUseTLS   = flag.Bool("use-tls", true, "I promise I terminated TLS elsewhere when changing this")
+    flMTLS     = flag.Bool("mtls", false, "enable mutual TLS")
+    flClientCA = flag.String("mtls-ca", env.String("MOROZ_CLIENT_CA", "ca.crt"), "path to client CA certificate for mutual TLS")
 	)
 	flag.Parse()
 
@@ -69,6 +92,21 @@ func main() {
 	}
 
 	logger := logutil.NewServerLogger(*flDebug)
+
+  var clientCAs *x509.CertPool
+  if *flMTLS {
+    if _, err := os.Stat(*flClientCA); os.IsNotExist(err) {
+      fmt.Printf(createCABash)
+      os.Exit(2)
+    }
+
+    caCert, err := ioutil.ReadFile(*flClientCA)
+    if err != nil {
+      logutil.Fatal(logger, "msg", "failed to read client CA certificate", "err", err)
+    }
+    clientCAs = x509.NewCertPool()
+    clientCAs.AppendCertsFromPEM(caCert)
+  }
 
 	repo := santaconfig.NewFileRepo(*flConfigs)
 	var svc moroz.Service
@@ -106,8 +144,16 @@ func main() {
 	{
 		srv := httputil.NewServer(*flAddr, r)
 		g.Add(func() error {
-			level.Debug(logger).Log("msg", "serve http", "tls", *flUseTLS, "addr", *flAddr)
+			level.Debug(logger).Log("msg", "serve http", "tls", *flUseTLS, "mtls", *flMTLS, "addr", *flAddr)
 			if *flUseTLS {
+        tlsConfig := &tls.Config{
+          ClientAuth: tls.NoClientCert,
+        }
+        if *flMTLS {
+          tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+          tlsConfig.ClientCAs = clientCAs
+        }
+        srv.TLSConfig = tlsConfig
 				return srv.ListenAndServeTLS(*flTLSCert, *flTLSKey)
 			} else {
 				return srv.ListenAndServe()
