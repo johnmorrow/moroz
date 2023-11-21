@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
-  "io/ioutil"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"syscall"
@@ -71,8 +71,8 @@ func main() {
 		flVersion  = flag.Bool("version", false, "print version information")
 		flDebug    = flag.Bool("debug", false, "log at a debug level by default.")
 		flUseTLS   = flag.Bool("use-tls", true, "I promise I terminated TLS elsewhere when changing this")
-    flMTLS     = flag.Bool("mtls", false, "enable mutual TLS")
-    flClientCA = flag.String("mtls-ca", env.String("MOROZ_CLIENT_CA", "ca.crt"), "path to client CA certificate for mutual TLS")
+		flMTLS     = flag.Bool("mtls", false, "enable mutual TLS")
+		flClientCA = flag.String("mtls-ca", env.String("MOROZ_CLIENT_CA", "ca.crt"), "path to client CA certificate for mutual TLS")
 	)
 	flag.Parse()
 
@@ -93,20 +93,20 @@ func main() {
 
 	logger := logutil.NewServerLogger(*flDebug)
 
-  var clientCAs *x509.CertPool
-  if *flMTLS {
-    if _, err := os.Stat(*flClientCA); os.IsNotExist(err) {
-      fmt.Printf(createCABash)
-      os.Exit(2)
-    }
+	var clientCAs *x509.CertPool
+	if *flMTLS {
+		if _, err := os.Stat(*flClientCA); os.IsNotExist(err) {
+			fmt.Printf(createCABash)
+			os.Exit(2)
+		}
 
-    caCert, err := ioutil.ReadFile(*flClientCA)
-    if err != nil {
-      logutil.Fatal(logger, "msg", "failed to read client CA certificate", "err", err)
-    }
-    clientCAs = x509.NewCertPool()
-    clientCAs.AppendCertsFromPEM(caCert)
-  }
+		caCert, err := ioutil.ReadFile(*flClientCA)
+		if err != nil {
+			logutil.Fatal(logger, "msg", "failed to read client CA certificate", "err", err)
+		}
+		clientCAs = x509.NewCertPool()
+		clientCAs.AppendCertsFromPEM(caCert)
+	}
 
 	repo := santaconfig.NewFileRepo(*flConfigs)
 	var svc moroz.Service
@@ -146,14 +146,14 @@ func main() {
 		g.Add(func() error {
 			level.Debug(logger).Log("msg", "serve http", "tls", *flUseTLS, "mtls", *flMTLS, "addr", *flAddr)
 			if *flUseTLS {
-        tlsConfig := &tls.Config{
-          ClientAuth: tls.NoClientCert,
-        }
-        if *flMTLS {
-          tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-          tlsConfig.ClientCAs = clientCAs
-        }
-        srv.TLSConfig = tlsConfig
+				tlsConfig := &tls.Config{
+					ClientAuth: tls.NoClientCert,
+				}
+				if *flMTLS {
+					tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+					tlsConfig.ClientCAs = clientCAs
+				}
+				srv.TLSConfig = tlsConfig
 				return srv.ListenAndServeTLS(*flTLSCert, *flTLSKey)
 			} else {
 				return srv.ListenAndServe()
